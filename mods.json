@@ -1,0 +1,12 @@
+[
+  {
+    "Name":"horror",
+    "Description":"A simple horror mod for Facade.",
+    "Version":"1.4"
+  },
+  {
+    "Name":"test",
+    "Description":"Test mod for Facade, adds commands and other knick knacks.",
+    "Version":"1.1"
+  }
+]
