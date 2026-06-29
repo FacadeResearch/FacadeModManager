@@ -9,7 +9,17 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <None Remove="Image1.png" />
+    <None Remove="Trip_Preconditions_skipintro.class" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Image1.png" />
+    <Resource Include="Trip_Preconditions_skipintro.class" />
   </ItemGroup>
 
 </Project>

@@ -41,7 +41,7 @@
 
                 <StackPanel>
                     <Border CornerRadius="10" ClipToBounds="True" Height="100" Margin="0,0,0,10">
-                        <Image Source="/Image1.png" Stretch="UniformToFill"/>
+                        <Image Source="pack://application:,,,/Image1.png" Stretch="UniformToFill"/>
                     </Border>
                     <TextBlock Text="FACADE" FontSize="20" FontWeight="Bold" HorizontalAlignment="Center"/>
                     <TextBlock x:Name="modManagerLabel" Text="Mod Manager v1.0" FontSize="11" Opacity="0.5" HorizontalAlignment="Center" Margin="0,0,0,30"/>
@@ -124,7 +124,7 @@
 
                                 <CheckBox Grid.Column="1" x:Name="IntroSkipCheck" 
                           Style="{StaticResource BetterCheck}"
-                          Cursor="Hand" VerticalAlignment="Center"/>
+                          Cursor="Hand" VerticalAlignment="Center" Click="skipIntro_Check"/>
                             </Grid>
                         </Border>
                     </StackPanel>
@@ -182,7 +182,7 @@
 
                                 <CheckBox Grid.Column="1" x:Name="ShowConsole" 
           Style="{StaticResource BetterCheck}"
-          Cursor="Hand" VerticalAlignment="Center"/>
+          Cursor="Hand" VerticalAlignment="Center" Click="ShowConsole_Check"/>
                             </Grid>
                         </Border>
                     </StackPanel>

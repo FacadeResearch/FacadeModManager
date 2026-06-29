@@ -33,35 +33,186 @@ namespace FacadeModManager
         static List<Mod>? AvailableMods { get; set; }
         static bool FirstTimeSetup = true;
         static bool Installed = false;
+        static string ModLoaderIniContents = "";
+        static FacadeModLoaderSettings LoaderSettings { get; set; }
 
         static MainWindow()
         {
             AvailableMods = new List<Mod>();
             Settings = new ModManagerSettings();
+            ModLoaderIniContents = "[FacadeModLoader]\nNoConsole=false"; //more to come I guesss
+            LoaderSettings = new FacadeModLoaderSettings();
+        }
+
+        public static void SaveModLoaderSettings(string facadePath, bool noConsole)
+        {
+            string iniPath = Path.Combine(facadePath, "FacadeModLoader.ini");
+
+            StringBuilder sb = new StringBuilder();
+
+            sb.AppendLine("[FacadeModLoader]");
+            sb.AppendLine($"NoConsole={noConsole.ToString().ToLower()}");
+
+            File.WriteAllText(iniPath, sb.ToString());
+        }
+
+        public static FacadeModLoaderSettings LoadModLoaderSettings(string facadePath)
+        {
+            string iniPath = Path.Combine(facadePath, "FacadeModLoader.ini");
+            bool noConsole = false;
+
+            FacadeModLoaderSettings retValue = new FacadeModLoaderSettings()
+            {
+                NoConsole = noConsole
+            };
+
+            if (!File.Exists(iniPath))
+            {
+                return retValue;
+            }
+
+            try
+            {
+                string[] lines = File.ReadAllLines(iniPath);
+                
+                foreach(string line in lines)
+                {
+                    string trimmed = line.Trim();
+
+                    if (trimmed.StartsWith(";") || trimmed.StartsWith("["))
+                        continue;
+
+                    string[] parts = trimmed.Split('=', 2);
+                    if (parts.Length == 2)
+                    {
+                        string key = parts[0].Trim();
+                        string value = parts[1].Trim();
+
+                        if (key.Equals("NoConsole", StringComparison.OrdinalIgnoreCase))
+                        {
+                            noConsole = value.Equals("true", StringComparison.OrdinalIgnoreCase);
+                        }
+                    }
+                }
+
+                retValue.NoConsole = noConsole;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Failed to read Mod Loader INI file: {ex.Message}");
+            }
+
+            return retValue;
+        }
+
+        private async Task LoadAvailableModsAsync()
+        {
+            List<Mod> fetchedMods = await GitHubHelper.FetchAvailableModsAsync();
+
+            if (Settings != null && !string.IsNullOrEmpty(Settings.FacadePath))
+            {
+                string modsDirectory = Path.Combine(Settings.FacadePath, "mods");
+
+                foreach (var mod in fetchedMods)
+                {
+                    string expectedDllPath = Path.Combine(modsDirectory, mod.Name + ".dll");
+
+                    if (File.Exists(expectedDllPath))
+                    {
+                        mod.Installed = true;
+                    }
+                }
+            }
+
+            AvailableMods = fetchedMods;
+            ModsListBox.ItemsSource = AvailableMods;
         }
 
         private async Task CheckUpdates()
         {
+            var latestRelease = await GitHubHelper.GetLatestReleaseAsync("FacadeModManager");
+
+            if (latestRelease == null || string.IsNullOrEmpty(latestRelease.TagName) || string.IsNullOrEmpty(latestRelease.DownloadUrl))
+                return;
+
+            if (latestRelease.TagName != Version)
+            {
+                MessageBoxResult result = MessageBox.Show(
+                    $"A new version ({latestRelease.TagName}) is available! Would you like to update now?",
+                    "Update Available",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Information
+                );
+
+                if (result == MessageBoxResult.Yes)
+                {
+                    await RunAutoUpdater(latestRelease.DownloadUrl);
+                }
+            }
+        }
+
+        private async Task RunAutoUpdater(string downloadUrl)
+        {
             try
             {
-                using (HttpClient client = new HttpClient())
+                string currentExePath = Environment.ProcessPath!;
+                string currentDirectory = AppDomain.CurrentDomain.BaseDirectory;
+                string newExePath = Path.Combine(currentDirectory, "FacadeModManager_new.exe");
+                string batchScriptPath = Path.Combine(currentDirectory, "updater.bat");
+
+                await GitHubHelper.DownloadDllAsync(downloadUrl, newExePath);
+
+                StringBuilder batchContent = new StringBuilder();
+
+                batchContent.AppendLine("@echo off");
+                batchContent.AppendLine("timeout /t 2 /nobreak > nul");
+                batchContent.AppendLine($"del \"{currentExePath}\"");
+                batchContent.AppendLine($"ren \"{newExePath}\" \"{Path.GetFileName(currentExePath)}\"");
+                batchContent.AppendLine($"start \"\" \"{currentExePath}\"");
+                batchContent.AppendLine($"del \"%~f0\"");
+
+                await File.WriteAllTextAsync(batchScriptPath, batchContent.ToString());
+
+                ProcessStartInfo startInfo = new ProcessStartInfo
                 {
-                    HttpResponseMessage versionResponse = await client.GetAsync("https://raw.githubusercontent.com/FacadeResearch/FacadeModManager/refs/heads/main/version.txt");
-                    string saidVersion = await versionResponse.Content.ReadAsStringAsync();
+                    FileName = batchScriptPath,
+                    CreateNoWindow = true,
+                    UseShellExecute = false
+                };
 
-                    HttpResponseMessage availableModsResponse = await client.GetAsync("https://raw.githubusercontent.com/FacadeResearch/FacadeModManager/refs/heads/main/mods.json");
-                    string modsJson = await availableModsResponse.Content.ReadAsStringAsync();
+                Process.Start(startInfo);
+                Application.Current.Shutdown();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to install update: {ex.Message}", "Update Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
 
-                    AvailableMods = JsonConvert.DeserializeObject<List<Mod>>(modsJson);
+        private void ExtractEmbeddedFile(string packUri, string destinationPath)
+        {
+            try
+            {
+                string? directory = Path.GetDirectoryName(destinationPath);
 
-                    if (saidVersion != Version)
+                if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+                    Directory.CreateDirectory(directory);
+
+                var resourceInfo = Application.GetResourceStream(new Uri(packUri, UriKind.RelativeOrAbsolute));
+
+                if (resourceInfo != null)
+                {
+                    using (Stream resourceStream = resourceInfo.Stream)
+                    using (FileStream fs = new FileStream(destinationPath, FileMode.Create, FileAccess.Write))
                     {
-                        Version = saidVersion;
-                        //do updates i guess
+                        resourceStream.CopyTo(fs);
                     }
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to extract file from local store: {ex.Message}");
+            }
         }
 
         private async void OnLoad(object sender, RoutedEventArgs e)
@@ -69,6 +220,7 @@ namespace FacadeModManager
             modManagerLabel.Text = $"Mod Manager v{Version}";
 
             await CheckUpdates();
+            await LoadAvailableModsAsync();
 
             using (WindowsIdentity identity = WindowsIdentity.GetCurrent())
             {
@@ -112,6 +264,12 @@ namespace FacadeModManager
 
                 Installed = Directory.Exists(Path.Combine(Settings.FacadePath, "mods"));
 
+                if (Installed)
+                {
+                    LoaderSettings = LoadModLoaderSettings(Settings.FacadePath);
+                    ShowConsole.IsChecked = !LoaderSettings.NoConsole;
+                }
+
                 installButton.Content = Installed ? "UNINSTALL" : "INSTALL MODLOADER";
                 installButton.Background = Installed ? Brushes.Crimson : Brushes.Green;
 
@@ -120,23 +278,25 @@ namespace FacadeModManager
 
                 modLoaderSettingsButton.Opacity = Installed ? 1.0 : 0.1;
                 modLoaderSettingsButton.IsEnabled = Installed;
+                IntroSkipCheck.IsChecked = File.Exists(Path.Combine(Settings.FacadePath.Replace("sources", "classes"), @"characters\trip\java\Trip_Preconditions_original.class"));
             }
         }
 
         private async Task HandleInstallUninstall()
         {
-            string FullPathOfAnimStarter = Path.Combine(Settings?.FacadePath!, "animEngineStarter.exe");
+            if (Settings == null || Settings.FacadePath == null) return;
+
+            string FullPathOfAnimStarter = Path.Combine(Settings.FacadePath, "animEngineStarter.exe");
 
             if (!Installed)
             {
-                using (HttpClient client = new HttpClient())
-                {
-                    using Stream stream = await client.GetStreamAsync("https://github.com/FacadeResearch/FacadeModLoader/releases/download/stable/FacadeModLoader.dll");
-                    using FileStream fs = new FileStream("FacadeModLoader.dll", FileMode.CreateNew);
-                    await stream.CopyToAsync(fs);
-                }
+                ReleaseData? ReleaseDetails = await GitHubHelper.GetLatestReleaseAsync("FacadeModLoader");
 
-                File.Copy(FullPathOfAnimStarter, Path.Combine(Settings?.FacadePath!, "animEngineStarter.exe.bak"));
+                if (ReleaseDetails == null || ReleaseDetails.DownloadUrl == null) return; //Handle this at some point, bad practice as is.
+
+                await GitHubHelper.DownloadDllAsync(ReleaseDetails.DownloadUrl, Path.Combine(Settings.FacadePath, "FacadeModLoader.dll"));
+
+                File.Copy(FullPathOfAnimStarter, Path.Combine(Settings.FacadePath, "animEngineStarter.exe.bak"));
 
                 using (BinaryWriter writer = new BinaryWriter(new FileStream(FullPathOfAnimStarter, FileMode.Open, FileAccess.ReadWrite)))
                 {
@@ -153,7 +313,9 @@ namespace FacadeModManager
                     writer.Flush();
                 }
 
-                Directory.CreateDirectory(Settings?.FacadePath! + "\\mods");
+                Directory.CreateDirectory(Settings.FacadePath + "\\mods");
+
+                File.AppendAllText(Path.Combine(Settings.FacadePath, "FacadeModLoader.ini"), ModLoaderIniContents);
 
                 MessageBox.Show("Installed!", "Facade Mod Manager");
             }
@@ -161,7 +323,7 @@ namespace FacadeModManager
             {
                 try
                 {
-                    string backupPath = Path.Combine(Settings?.FacadePath!, "animEngineStarter.exe.bak");
+                    string backupPath = Path.Combine(Settings.FacadePath, "animEngineStarter.exe.bak");
 
                     if (File.Exists(backupPath))
                     {
@@ -169,13 +331,20 @@ namespace FacadeModManager
                         File.Move(backupPath, FullPathOfAnimStarter);
                     }
 
-                    if (Directory.Exists(Path.Combine(Settings?.FacadePath!, "mods")))
-                        Directory.Delete(Path.Combine(Settings?.FacadePath!, "mods"), true);
+                    string classesPath = Settings.FacadePath.Replace("sources", "classes");
+                    string targetFilePath = Path.Combine(classesPath, @"characters\trip\java\Trip_Preconditions.class");
+                    string targetBackupFilePath = Path.Combine(classesPath, @"characters\trip\java\Trip_Preconditions_original.class");
 
-                    Settings?.InstalledMods = new List<Mod>();
+                    File.Move(targetBackupFilePath, targetFilePath); //Just in case they still have it patched
+
+                    if (Directory.Exists(Path.Combine(Settings.FacadePath, "mods")))
+                        Directory.Delete(Path.Combine(Settings.FacadePath, "mods"), true);
+
+                    Settings.InstalledMods = new List<Mod>();
                     File.WriteAllText("Settings.json", JsonConvert.SerializeObject(Settings, Formatting.Indented));
 
-                    File.Delete(Path.Combine(Settings?.FacadePath!, "FacadeModLoader.dll"));
+                    File.Delete(Path.Combine(Settings.FacadePath, "FacadeModLoader.dll"));
+                    File.Delete(Path.Combine(Settings.FacadePath, "FacadeModLoader.ini"));
 
                     MessageBox.Show("Uninstalled successfully!", "Facade Mod Manager");
                 }
@@ -185,7 +354,7 @@ namespace FacadeModManager
                 }
             }
 
-            Installed = Directory.Exists(Path.Combine(Settings?.FacadePath!, "mods"));
+            Installed = Directory.Exists(Path.Combine(Settings.FacadePath, "mods"));
 
             installButton.Content = Installed ? "UNINSTALL" : "INSTALL MODLOADER";
             installButton.Background = Installed ? Brushes.Crimson : Brushes.Green;
@@ -197,7 +366,7 @@ namespace FacadeModManager
             modLoaderSettingsButton.IsEnabled = Installed;
         }
 
-        public bool IsModInstalled(string ID) => File.Exists(Path.Combine(Settings?.FacadePath!, "mods", ID + ".dll"));
+        public bool IsModInstalled(string ID) => Settings != null && File.Exists(Path.Combine(Settings.FacadePath, "mods", ID + ".dll"));
 
         public void ShowScreen(UIElement screenToShow)
         {
@@ -221,20 +390,26 @@ namespace FacadeModManager
             ModsListBox.ItemsSource = AvailableMods;
         }
 
-        private void ModAction_Click(object sender, RoutedEventArgs e)
+        private async void ModAction_Click(object sender, RoutedEventArgs e)
         {
             var button = (Button)sender;
             var mod = (Mod)button.DataContext;
 
-            if (mod == null) return;
+            if (mod == null || Settings == null) return;
 
             if (mod.Installed)
             {
+                File.Delete(Path.Combine(Settings.FacadePath, "mods", mod.Name + ".dll"));
                 mod.Installed = false;
                 MessageBox.Show($"{mod.Name} uninstalled.");
             }
             else
             {
+                ReleaseData? LatestModRelease = await GitHubHelper.GetLatestReleaseAsync(mod.Name);
+                if (LatestModRelease == null || LatestModRelease.DownloadUrl == null) return; //Handle the invalid requested mod
+
+                await GitHubHelper.DownloadDllAsync(LatestModRelease.DownloadUrl, Path.Combine(Settings.FacadePath, "mods", mod.Name + ".dll"));
+
                 mod.Installed = true;
                 MessageBox.Show($"{mod.Name} installed!");
             }
@@ -281,6 +456,44 @@ namespace FacadeModManager
         private void facadeSettingsButton_Click(object sender, RoutedEventArgs e)
         {
             ShowScreen(FacadeSettingsContainer);
+        }
+
+        private void skipIntro_Check(object sender, RoutedEventArgs e)
+        {
+            if (Settings == null || Settings.FacadePath == null) return;
+
+            string classesPath = Settings.FacadePath.Replace("sources", "classes");
+            string targetFilePath = Path.Combine(classesPath, @"characters\trip\java\Trip_Preconditions.class");
+            string targetBackupFilePath = Path.Combine(classesPath, @"characters\trip\java\Trip_Preconditions_original.class");
+
+            if (IntroSkipCheck.IsChecked == true)
+            {
+                if (!File.Exists(targetBackupFilePath) && File.Exists(targetFilePath))
+                {
+                    File.Copy(targetFilePath, targetBackupFilePath, overwrite: true);
+                }
+
+                ExtractEmbeddedFile("pack://application:,,,/Trip_Preconditions_skipintro.class", targetFilePath);
+            }
+            else
+            {
+                if (File.Exists(targetBackupFilePath))
+                {
+                    if (File.Exists(targetFilePath))
+                    {
+                        File.Delete(targetFilePath);
+                    }
+
+                    File.Move(targetBackupFilePath, targetFilePath);
+                }
+            }
+        }
+
+        private void ShowConsole_Check(object sender, RoutedEventArgs e)
+        {
+            if (Settings == null || Settings.FacadePath == null) return;
+
+            SaveModLoaderSettings(Settings.FacadePath, ShowConsole.IsChecked == true ? false : true); //????? - Also it's NoConsole, so showing console would mean false for no console, vice versa
         }
 
         private void modLoaderSettingsButton_Click(object sender, RoutedEventArgs e)
