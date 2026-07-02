@@ -28,7 +28,7 @@ namespace FacadeModManager
     /// </summary>
     public partial class MainWindow : Window
     {
-        static string Version = "1.0";
+        static string Version = "1.1";
         static ModManagerSettings? Settings { get; set; }
         static List<Mod>? AvailableMods { get; set; }
         static bool FirstTimeSetup = true;
