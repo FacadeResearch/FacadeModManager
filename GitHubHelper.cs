@@ -73,9 +73,10 @@ namespace FacadeModManager
                 foreach (var repo in repos)
                 {
                     string repoName = repo["name"]?.ToString() ?? "";
+                    string pushed_at = repo["pushed_at"]?.ToString() ?? "";
                     bool isPrivate = repo["private"]?.Value<bool>() ?? false;
 
-                    if (!string.IsNullOrEmpty(repoName) && !isPrivate && !excludedRepos.Contains(repoName))
+                    if (!string.IsNullOrEmpty(repoName) && !isPrivate && !excludedRepos.Contains(repoName) && !string.IsNullOrEmpty(pushed_at))
                     {
                         string description = repo["description"]?.ToString() ?? "No description available.";
 
@@ -83,7 +84,8 @@ namespace FacadeModManager
                         {
                             Name = repoName,
                             Description = description,
-                            Installed = false
+                            Installed = false,
+                            LastPushedDate = DateTime.Parse(pushed_at, null, System.Globalization.DateTimeStyles.AdjustToUniversal)
                         });
                     }
                 }

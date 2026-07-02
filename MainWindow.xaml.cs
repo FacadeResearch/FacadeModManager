@@ -105,6 +105,36 @@ namespace FacadeModManager
             return retValue;
         }
 
+        private async Task UpdateModAsync(Mod mod)
+        {
+            if (Settings == null || string.IsNullOrEmpty(Settings.FacadePath)) return;
+
+            var releaseData = await GitHubHelper.GetLatestReleaseAsync(mod.Name);
+
+            if (releaseData != null && !string.IsNullOrEmpty(releaseData.DownloadUrl))
+            {
+                string modsDirectory = Path.Combine(Settings.FacadePath, "mods");
+                string destinationPath = Path.Combine(modsDirectory, mod.Name + ".dll");
+
+                try
+                {
+                    await GitHubHelper.DownloadDllAsync(releaseData.DownloadUrl, destinationPath);
+
+                    mod.NeedsUpdate = false;
+
+                    MessageBox.Show($"{mod.Name} updated successfully!", "Success", MessageBoxButton.OK);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Failed to update {mod.Name}: {ex.Message}", "Error", MessageBoxButton.OK);
+                }
+            }
+            else
+            {
+                MessageBox.Show($"Could not find a valid download link for {mod.Name}.", "Update Failed", MessageBoxButton.OK);
+            }
+        }
+
         private async Task LoadAvailableModsAsync()
         {
             List<Mod> fetchedMods = await GitHubHelper.FetchAvailableModsAsync();
@@ -120,6 +150,34 @@ namespace FacadeModManager
                     if (File.Exists(expectedDllPath))
                     {
                         mod.Installed = true;
+
+                        DateTime localFileTimeUtc = File.GetLastWriteTimeUtc(expectedDllPath);
+
+                        if (mod.LastPushedDate > localFileTimeUtc.AddSeconds(5))
+                        {
+                            mod.NeedsUpdate = true;
+                        }
+                    }
+                }
+            }
+
+            var outdatedMods = fetchedMods.Where(m => m.NeedsUpdate).ToList();
+
+            if (outdatedMods.Any())
+            {
+                string modNames = string.Join(", ", outdatedMods.Select(m => m.Name));
+
+                var result = MessageBox.Show(
+                    $"Updates are available for the following mods:\n\n{modNames}\n\nWould you like to update them now?",
+                    "Updates Available",
+                    MessageBoxButton.YesNo
+                );
+
+                if (result == MessageBoxResult.Yes)
+                {
+                    foreach (var mod in outdatedMods)
+                    {
+                        await UpdateModAsync(mod);
                     }
                 }
             }
@@ -219,6 +277,17 @@ namespace FacadeModManager
         {
             modManagerLabel.Text = $"Mod Manager v{Version}";
 
+            if (File.Exists("Settings.json"))
+            {
+                string SettingsText = File.ReadAllText("Settings.json") ?? "";
+                Settings = JsonConvert.DeserializeObject<ModManagerSettings>(SettingsText);
+
+                FirstTimeSetup = false;
+                UpdateUIStatus(isConfigured: true);
+            }
+            else
+                UpdateUIStatus(isConfigured: false);
+
             await CheckUpdates();
             await LoadAvailableModsAsync();
 
@@ -233,17 +302,6 @@ namespace FacadeModManager
                     Application.Current.Shutdown();
                 }
             }
-
-            if (File.Exists("Settings.json"))
-            {
-                string SettingsText = File.ReadAllText("Settings.json") ?? "";
-                Settings = JsonConvert.DeserializeObject<ModManagerSettings>(SettingsText);
-
-                FirstTimeSetup = false;
-                UpdateUIStatus(isConfigured: true);
-            }
-            else
-                UpdateUIStatus(isConfigured: false);
         }
 
         private void UpdateUIStatus(bool isConfigured)
