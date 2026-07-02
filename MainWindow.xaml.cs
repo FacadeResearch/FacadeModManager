@@ -20,6 +20,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Shapes;
 using Path = System.IO.Path;
+using System.IO.Compression;
 
 namespace FacadeModManager
 {
@@ -28,7 +29,7 @@ namespace FacadeModManager
     /// </summary>
     public partial class MainWindow : Window
     {
-        static string Version = "1.1";
+        static string Version = "1.0";
         static ModManagerSettings? Settings { get; set; }
         static List<Mod>? AvailableMods { get; set; }
         static bool FirstTimeSetup = true;
@@ -215,17 +216,31 @@ namespace FacadeModManager
             {
                 string currentExePath = Environment.ProcessPath!;
                 string currentDirectory = AppDomain.CurrentDomain.BaseDirectory;
-                string newExePath = Path.Combine(currentDirectory, "FacadeModManager_new.exe");
+
+                string zipPath = Path.Combine(currentDirectory, "update.zip");
+                string extractTempPath = Path.Combine(currentDirectory, "update_extracted");
                 string batchScriptPath = Path.Combine(currentDirectory, "updater.bat");
 
-                await GitHubHelper.DownloadDllAsync(downloadUrl, newExePath);
+                await GitHubHelper.DownloadDllAsync(downloadUrl, zipPath);
+
+                if (Directory.Exists(extractTempPath))
+                {
+                    Directory.Delete(extractTempPath, true);
+                }
+
+                ZipFile.ExtractToDirectory(zipPath, extractTempPath);
+
+                string sourceCopyPath = Directory.GetDirectories(extractTempPath)[0];
 
                 StringBuilder batchContent = new StringBuilder();
 
                 batchContent.AppendLine("@echo off");
                 batchContent.AppendLine("timeout /t 2 /nobreak > nul");
-                batchContent.AppendLine($"del \"{currentExePath}\"");
-                batchContent.AppendLine($"ren \"{newExePath}\" \"{Path.GetFileName(currentExePath)}\"");
+
+                batchContent.AppendLine($"xcopy /E /Y \"{sourceCopyPath}\\*\" \"{currentDirectory}\"");
+
+                batchContent.AppendLine($"del /Q \"{zipPath}\"");
+                batchContent.AppendLine($"rmdir /S /Q \"{extractTempPath}\"");
                 batchContent.AppendLine($"start \"\" \"{currentExePath}\"");
                 batchContent.AppendLine($"del \"%~f0\"");
 
